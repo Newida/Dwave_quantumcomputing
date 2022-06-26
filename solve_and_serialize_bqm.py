@@ -6,10 +6,11 @@ import time
 import numpy as np
 import itertools
 from dwave.system import LeapHybridSampler 
+from dwave.system import DWaveSampler, EmbeddingComposite
 from dimod import BinaryQuadraticModel
 from dimod import *
 
-def solve_single_problem(x, v, lagrange_list):
+def solve_single_problem(x, v, lagrange_list, direct = False):
     if lagrange_list is None:
         print("BQM solver needs lagrange multiplier. If you do not know what to put here you might want to use CQM instead")
 
@@ -33,12 +34,18 @@ def solve_single_problem(x, v, lagrange_list):
     #--------------Constraints--------
     #constraints
     for i in range(len(x)):
-        c = [(z[i], x[i])]
-        bqm.add_linear_equality_constraint(c, constant = -v, lagrange_multiplier = lagrange_list[i], label=str(i))
+        c = [(z[i], x[i]-v)]
+        bqm.add_linear_equality_constraint(c, constant = 0, lagrange_multiplier = lagrange_list[i])
 
     #--------------Solve by Sampling--------
-    sampler = LeapHybridSampler(solver={'category':'hybrid'}) 
-    sampleset = sampler.sample(bqm, label="bqm_hybrid")
+    if direct:
+        print("Solving with direct QPU")
+        sampler = EmbeddingComposite(DWaveSampler())
+        sampleset = sampler.sample(bqm)
+    else:
+        print("Solving with Hybrid Solver")
+        sampler = LeapHybridSampler(solver={'category':'hybrid'}) 
+        sampleset = sampler.sample(bqm, label="bqm_hybrid")
 
     #--------------save output--------
     result['problem'] = {"x": x, "v": v, "bqm": bqm, "lagrange:" : lagrange_list}
@@ -50,7 +57,7 @@ def solve_single_problem(x, v, lagrange_list):
     #calculate classical solution
     classical_solution = np.zeros_like(solution_array)
     classical_solution[x == v] = 1
-    
+
     result['solution'] = {"all": sampleset, "best": solution_array, "classical": classical_solution}
     result['solution_correctness'] = (True if np.linalg.norm(classical_solution - solution_array) < 1e-16 else False)
     result['time'] = (time.time() - start_time)
@@ -162,7 +169,7 @@ def measure_lagrange(x, v):
     return (-1, result) #since l should not be negative the -1 encodes as an error
     
 
-if __name__ == '__main__':
+def testserialize_and_deserialize():
     workdir = Path.cwd() 
     x = np.array([1,2,2,3])
     v = x[1]
@@ -173,3 +180,20 @@ if __name__ == '__main__':
 
     result = deserialize_result(workdir / "test.dir")
     print(result)
+
+
+if __name__ == '__main__':
+    workdir = Path.cwd() 
+    x = np.array([1,2,2,3])
+    v = x[1]
+    if serialize_result(solve_single_problem(x, v, len(x), True), workdir / "test.dir"):
+        print("Saved to ", workdir / "test.dir")
+    else:
+        print("Something went wrong")
+    
+    result = deserialize_result(workdir / "test.dir")
+    
+    print("-----------------serialized------------------")
+    print(result["solution_correctness"])
+
+    print(result["solution"])
